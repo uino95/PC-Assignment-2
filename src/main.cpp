@@ -55,7 +55,24 @@ int main(int argc, char **argv)
 
     std::vector<Mesh> meshs = loadWavefront(input, false);
 
-    std::vector<unsigned char> frameBuffer = rasterise(meshs, width, height, rank*10, depth);
+    int root = 0;
+    int buffer = 0;
+
+    // the root send to all the other process in the MPI_COMM_WORLD the data needed which in this case is just the angle of rotation, which would be an integer
+    if(rank == root)
+    {
+        for (int i = 1; i < size; ++i)
+        {
+            buffer = i * 30;
+            MPI_Send(&buffer, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
+        }
+    }
+    else
+    {
+        MPI_Recv(&buffer, 1, MPI_INT, root, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    }
+
+    std::vector<unsigned char> frameBuffer = rasterise(meshs, width, height, buffer, depth);
 
     std::cout << "Writing image to '" << output << "'..." << std::endl;
 
