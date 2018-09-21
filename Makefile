@@ -33,9 +33,9 @@ BINARY := $(BUILD_DIR)/cpurender
 OPTIMIZATION := 3
 
 CPUS := $(shell nproc)
-MPIRUN := mpirun -np $(CPUS)
+MPIRUN := ../../../opt/usr/local/bin/mpirun -np $(CPUS)
 
-CXX := mpic++
+CXX :=../../../opt/usr/local/bin/mpic++
 FLAGS :=
 CXXFLAGS := -Wall -Wextra -Wpedantic -std=c++11 -O$(OPTIMIZATION) $(FLAGS)
 
