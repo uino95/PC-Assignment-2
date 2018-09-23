@@ -9,4 +9,4 @@
 #include "floats.hpp"
 #include "geometry.hpp"
 
-std::vector<Mesh> loadWavefront(std::string const srcFile, bool quiet = true);
+std::vector<Mesh> loadWavefront(std::string const srcFile, int rank, int root,bool quiet = true);
