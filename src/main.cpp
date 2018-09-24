@@ -31,8 +31,9 @@ int main(int argc, char **argv)
 
     MPI_Type_commit(&mpi_float3);
     {
-        MPI_Aint typesize;
-        MPI_Type_extent(mpi_float3, &typesize);
+        MPI_Aint lowerBound;
+        MPI_Aint extent;
+        MPI_Type_get_extent(mpi_float3, &lowerBound, &extent);
     }
 
     count = 4; //number of elements in struct
@@ -45,8 +46,32 @@ int main(int argc, char **argv)
 
     MPI_Type_commit(&mpi_float4);
     {
-        MPI_Aint typesize;
-        MPI_Type_extent(mpi_float4, &typesize);
+        MPI_Aint lowerBound;
+        MPI_Aint extent;
+        MPI_Type_get_extent(mpi_float4, &lowerBound, &extent);
+    }
+
+    count = 9; //number of elements in struct
+    MPI_Aint offsetsM[9] = {0, 
+                            24, 
+                            24 + sizeof(float), 
+                            24 + sizeof(float) + sizeof(mpi_float3), 
+                            24 + sizeof(float) + 2 * sizeof(mpi_float3),
+                            24 + sizeof(float) + 3 * sizeof(mpi_float3),
+                            24 + sizeof(float) + 4 * sizeof(mpi_float3),
+                            24 + 2 * sizeof(float) + 4 * sizeof(mpi_float3),
+                            24 + 3 * sizeof(float) + 3 * sizeof(mpi_float3)};
+    int blocklengthsM[9] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+    MPI_Datatype typesM[9] = {MPI_CHAR, MPI_FLOAT, mpi_float3, mpi_float3, mpi_float3, mpi_float3, MPI_FLOAT, MPI_FLOAT, MPI_UNSIGNED};
+    MPI_Datatype mpi_material;
+
+    MPI_Type_create_struct(count, blocklengthsM, offsetsM, typesM, &mpi_material);
+
+    MPI_Type_commit(&mpi_material);
+    {
+        MPI_Aint lowerBound;
+        MPI_Aint extent;
+        MPI_Type_get_extent(mpi_material, &lowerBound, &extent);
     }
 
 
@@ -80,25 +105,27 @@ int main(int argc, char **argv)
         }
     }
 
-    std::cout << "Loading '" << input << "' file... " << std::endl;
-
     int root = 0;
     unsigned int meshSize;
+    std::vector<Mesh> meshs;
     std::vector<unsigned int> verticesSize;
     std::vector<unsigned int> normalsSize;
     std::vector<unsigned int> texturesSize;
-
-    // just load the materials
-    std::vector<Mesh> meshs = loadWavefront(input, rank, root, false);
+    std::vector<std::string> meshNames;
 
     // For each mesh i need the sizes of each vector
     if(rank == root)
     {
+        // just load the materials
+        std::cout << "Loading '" << input << "' file... " << std::endl;
+        meshs = loadWavefront(input, rank, root, false);
+
         for (unsigned int i = 0; i < meshs.size(); ++i)
         {
             verticesSize.push_back(meshs.at(i).vertices.size());
             normalsSize.push_back(meshs.at(i).normals.size());
             texturesSize.push_back(meshs.at(i).textures.size());
+            meshNames.push_back(meshs.at(i).name);
         }
         meshSize = meshs.size();
     }
@@ -108,19 +135,14 @@ int main(int argc, char **argv)
 
     if(rank != root)
     {
-        for (unsigned int i = 0; i < meshs.size(); ++i)
-        {
-            meshs.at(i).vertices.clear();
-            meshs.at(i).normals.clear();
-            meshs.at(i).textures.clear();
-        }
-
+        meshNames.resize(meshSize);
         verticesSize.resize(meshSize);
         normalsSize.resize(meshSize);
         texturesSize.resize(meshSize);
     }
 
     // Broadcast just the size of each vector
+    MPI_Bcast(&meshNames[0], meshSize, MPI_CHAR, root, MPI_COMM_WORLD);
     MPI_Bcast(&verticesSize[0], meshSize, MPI_UNSIGNED, root, MPI_COMM_WORLD);
     MPI_Bcast(&normalsSize[0], meshSize, MPI_UNSIGNED, root, MPI_COMM_WORLD);
     MPI_Bcast(&texturesSize[0], meshSize, MPI_UNSIGNED, root, MPI_COMM_WORLD);
@@ -128,21 +150,25 @@ int main(int argc, char **argv)
     // Reserve the right space for each vector
     if(rank != root)
     {
+        for (unsigned int i = 0; i < meshSize; ++i){
+            Mesh mesh(meshNames.at(i));
+            meshs.push_back(mesh);
+        }
         for (unsigned int i = 0; i < meshSize; ++i)
         {
-
             meshs.at(i).vertices.resize(verticesSize.at(i));
             meshs.at(i).normals.resize(normalsSize.at(i));
             meshs.at(i).textures.resize(texturesSize.at(i));
         }
     }
 
-    // Pass the vector
+    // Pass the vector and the material
     for (unsigned int i = 0; i < meshSize; ++i)
     {
         MPI_Bcast(&meshs.at(i).vertices[0], verticesSize.at(i),  mpi_float4, root, MPI_COMM_WORLD);
         MPI_Bcast(&meshs.at(i).normals[0], normalsSize.at(i),  mpi_float3, root, MPI_COMM_WORLD);
         MPI_Bcast(&meshs.at(i).textures[0], texturesSize.at(i),  mpi_float3, root, MPI_COMM_WORLD);
+        MPI_Bcast(&meshs.at(i).material, 1,  mpi_material, root, MPI_COMM_WORLD);
     }
 
     std::vector<unsigned char> frameBuffer = rasterise(meshs, width, height, rank*10, depth);
