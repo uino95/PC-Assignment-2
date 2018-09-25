@@ -164,6 +164,9 @@ void updateList(std::vector<float3> &currentOffsets, float largestBoundingBoxSid
                 for(int offsetZ = -1; offsetZ <= 1; offsetZ++)
                 {
                     float3 offset(offsetX, offsetY, offsetZ);
+                    if(offset == 0) {
+                      continue;
+                    }
                     float3 displacedOffset(currentOffsets.at(i) + offset * (largestBoundingBoxSide / 2.0f) * scale);
                     newOffsets.push_back(displacedOffset);
                 }
@@ -180,21 +183,24 @@ void renderMeshFractal(
     std::vector<unsigned char> &frameBuffer,
     std::vector<float> &depthBuffer,
     float largestBoundingBoxSide,
-    int angle,
+    int rank,
+    int size,
     int depthLimit,
     float scale = 1.0,
     float3 distanceOffset = {0, 0, 0})
 {
     // Start by rendering the mesh at this depth
-    for (unsigned int j = 0; j < meshes.size(); j++)
-    {
-        Mesh &mesh = meshes.at(j);
-        Mesh &transformedMesh = transformedMeshes.at(j);
-        runVertexShader(mesh, transformedMesh, distanceOffset, scale, width, height);
-        rasteriseTriangles(transformedMesh, frameBuffer, depthBuffer, width, height);
+    if(rank == 0) {
+      for (unsigned int j = 0; j < meshes.size(); j++)
+      {
+          Mesh &mesh = meshes.at(j);
+          Mesh &transformedMesh = transformedMeshes.at(j);
+          runVertexShader(mesh, transformedMesh, distanceOffset, scale, width, height);
+          rasteriseTriangles(transformedMesh, frameBuffer, depthBuffer, width, height);
+      }
     }
 
-    int i = 0;
+    unsigned int i = 0;
     int currentDepth = 1;
     std::vector<float3> currentOffsets;
     currentOffsets.push_back(distanceOffset);
@@ -205,30 +211,49 @@ void renderMeshFractal(
     scale = scale / 3.0;
 
     // Check whether we've reached the recursive depth of the fractal we want to reach
+    //TODO pulire istanze
+    int totalIterations = 26;
+    int startIndex =  rank * (totalIterations / size);
+    int endIndex = startIndex + totalIterations / size;
+
+    //TODO le due alternative: si riproporziona qui o nell'else. Chiedere consiglio su quale e piu efficiente
+    if(rank >= size - 1) {
+      endIndex = totalIterations;
+    }
+
+    std::vector<float3>::const_iterator first = currentOffsets.begin() + startIndex;
+    std::vector<float3>::const_iterator last = currentOffsets.begin() + endIndex;
+    std::vector<float3> partialCurrentOffsets(first, last);
+    currentOffsets = partialCurrentOffsets;
+    partialCurrentOffsets.clear();
+
+    std::cout << "currentOffsetsZ " << currentOffsets.size() << " " << rank << std::endl;
+    unsigned int number = 26;
     while(currentDepth != depthLimit)
     {
-        if(i < pow(3, 3 * currentDepth))
+        int limit = currentOffsets.size();
+
+        if(i < limit)
         {
             // We draw the new objects in a grid around the "main" one.
             // We thus skip the location of the object itself.
-            if(currentOffsets.at(i) != 0)
+            for (unsigned int j = 0; j < meshes.size(); j++)
             {
-                for (unsigned int j = 0; j < meshes.size(); j++)
-                {
-                    Mesh &mesh = meshes.at(j);
-                    Mesh &transformedMesh = transformedMeshes.at(j);
-                    runVertexShader(mesh, transformedMesh, currentOffsets.at(i), scale, width, height);
-                    rasteriseTriangles(transformedMesh, frameBuffer, depthBuffer, width, height);
-                }
+                Mesh &mesh = meshes.at(j);
+                Mesh &transformedMesh = transformedMeshes.at(j);
+                runVertexShader(mesh, transformedMesh, currentOffsets.at(i), scale, width, height);
+                rasteriseTriangles(transformedMesh, frameBuffer, depthBuffer, width, height);
             }
         }
         // in order to avoid unuseful computation
         else if(currentDepth + 1 < depthLimit)
         {
             // Now we update the list of the offset in a smaller size
+            std::cout << "currentOffsetsA " << currentOffsets.size() << " " << rank << std::endl;
             updateList(currentOffsets, largestBoundingBoxSide, scale, tmpOffsets);
             currentOffsets = tmpOffsets;
             tmpOffsets.clear();
+            std::cout << "currentOffsetsB " << currentOffsets.size() << " " << rank << std::endl;
             currentDepth++;
             scale = scale / 3.0;
             i = -1;
@@ -241,7 +266,7 @@ void renderMeshFractal(
 }
 
 // This function kicks off the rasterisation process.
-std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int width, unsigned int height, int angle, unsigned int depthLimit)
+std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int width, unsigned int height, int rank, int size, unsigned int depthLimit)
 {
     // We first need to allocate some buffers.
     // The framebuffer contains the image being rendered.
@@ -281,7 +306,7 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
     float largestBoundingBoxSide = std::max(std::max(boundingBoxDimensions.x, boundingBoxDimensions.y), boundingBoxDimensions.z);
 
 
-    renderMeshFractal(meshes, transformedMeshes, width, height, frameBuffer, depthBuffer, largestBoundingBoxSide, angle, depthLimit);//depthLimit);
+    renderMeshFractal(meshes, transformedMeshes, width, height, frameBuffer, depthBuffer, largestBoundingBoxSide, rank, size, depthLimit);//depthLimit);
 
 
     std::cout << "finished!" << std::endl;

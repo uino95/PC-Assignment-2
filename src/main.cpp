@@ -145,7 +145,7 @@ int main(int argc, char **argv)
         MPI_Bcast(&meshs.at(i).textures[0], texturesSize.at(i),  mpi_float3, root, MPI_COMM_WORLD);
     }
 
-    std::vector<unsigned char> frameBuffer = rasterise(meshs, width, height, rank*10, depth);
+    std::vector<unsigned char> frameBuffer = rasterise(meshs, width, height, rank, size, depth);
 
     std::cout << "Writing image to '" << output << "'..." << std::endl;
 
