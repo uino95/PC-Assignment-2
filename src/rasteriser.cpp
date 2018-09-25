@@ -5,6 +5,7 @@
 #include <chrono>
 #include <limits>
 #include <mpi.h>
+#include <math.h>
 
 const std::vector<globalLight> lightSources = { {{0.3f, 0.5f, 1.0f}, {1.0f, 1.0f, 1.0f}} };
 
@@ -29,42 +30,42 @@ void runVertexShader( Mesh &mesh,
 
     // This projection matrix assumes a 16:9 aspect ratio, and an field of view (FOV) of 90 degrees.
     mat4x4 const projectionMatrix(
-        0.347270,   0, 			0, 		0,
-        0,	  		0.617370, 	0,		0,
-        0,	  		0,			-1, 	-0.2f,
-        0,	  		0,			-1,		0);
+        0.347270,   0,          0,      0,
+        0,          0.617370,   0,      0,
+        0,          0,          -1,     -0.2f,
+        0,          0,          -1,     0);
 
     mat4x4 translationMatrix(
-        1,			0,			0,			0 + positionOffset.x /*X*/,
-        0,			1,			0,			0 + positionOffset.y /*Y*/,
-        0,			0,			1,			-10 + positionOffset.z /*Z*/,
-        0,			0,			0,			1);
+        1,          0,          0,          0 + positionOffset.x /*X*/,
+        0,          1,          0,          0 + positionOffset.y /*Y*/,
+        0,          0,          1,          -10 + positionOffset.z /*Z*/,
+        0,          0,          0,          1);
 
     mat4x4 scaleMatrix(
-        scale/*X*/,	0,			0,				0,
-        0, 			scale/*Y*/, 0,				0,
-        0, 			0,			scale/*Z*/, 	0,
-        0, 			0,			0,				1);
+        scale/*X*/, 0,          0,              0,
+        0,          scale/*Y*/, 0,              0,
+        0,          0,          scale/*Z*/,     0,
+        0,          0,          0,              1);
 
     mat4x4 const rotationMatrixX(
-        1,			0,				0, 				0,
-        0, 			std::cos(0), 	-std::sin(0),	0,
-        0, 			std::sin(0),	std::cos(0), 	0,
-        0, 			0,				0,				1);
+        1,          0,              0,              0,
+        0,          std::cos(0),    -std::sin(0),   0,
+        0,          std::sin(0),    std::cos(0),    0,
+        0,          0,              0,              1);
 
     float const rotationAngleRad = (pi / 4.0f) + (rotationAngle / (180.0f / pi));
 
     mat4x4 const rotationMatrixY(
-        std::cos(rotationAngleRad),		0,			std::sin(rotationAngleRad), 	0,
-        0, 								1, 			0,								0,
-        -std::sin(rotationAngleRad), 	0,			std::cos(rotationAngleRad), 	0,
-        0, 								0,			0,								1);
+        std::cos(rotationAngleRad),     0,          std::sin(rotationAngleRad),     0,
+        0,                              1,          0,                              0,
+        -std::sin(rotationAngleRad),    0,          std::cos(rotationAngleRad),     0,
+        0,                              0,          0,                              1);
 
     mat4x4 const rotationMatrixZ(
-        std::cos(pi),	-std::sin(pi),	0,			0,
-        std::sin(pi), 	std::cos(pi), 	0,			0,
-        0,				0,				1,			0,
-        0, 				0,				0,			1);
+        std::cos(pi),   -std::sin(pi),  0,          0,
+        std::sin(pi),   std::cos(pi),   0,          0,
+        0,              0,              1,          0,
+        0,              0,              0,          1);
 
     mat4x4 const MVP =
         projectionMatrix * translationMatrix * rotationMatrixX * rotationMatrixY * rotationMatrixZ * scaleMatrix;
@@ -151,6 +152,26 @@ void rasteriseTriangles( Mesh &transformedMesh,
     }
 }
 
+void updateList(std::vector<float3> &currentOffsets, float largestBoundingBoxSide, float scale, std::vector<float3> &newOffsets)
+{
+
+    for (unsigned int i = 0; i < currentOffsets.size(); ++i)
+    {
+        for(int offsetX = -1; offsetX <= 1; offsetX++)
+        {
+            for(int offsetY = -1; offsetY <= 1; offsetY++)
+            {
+                for(int offsetZ = -1; offsetZ <= 1; offsetZ++)
+                {
+                    float3 offset(offsetX, offsetY, offsetZ);
+                    float3 displacedOffset(currentOffsets.at(i) + offset * (largestBoundingBoxSide / 2.0f) * scale);
+                    newOffsets.push_back(displacedOffset);
+                }
+            }
+        }
+    }
+}
+
 void renderMeshFractal(
     std::vector<Mesh> &meshes,
     std::vector<Mesh> &transformedMeshes,
@@ -164,48 +185,59 @@ void renderMeshFractal(
     float scale = 1.0,
     float3 distanceOffset = {0, 0, 0})
 {
-
     // Start by rendering the mesh at this depth
-    for (unsigned int i = 0; i < meshes.size(); i++)
+    for (unsigned int j = 0; j < meshes.size(); j++)
     {
-        Mesh &mesh = meshes.at(i);
-        Mesh &transformedMesh = transformedMeshes.at(i);
-        runVertexShader(mesh, transformedMesh, distanceOffset, scale, width, height, angle);
+        Mesh &mesh = meshes.at(j);
+        Mesh &transformedMesh = transformedMeshes.at(j);
+        runVertexShader(mesh, transformedMesh, distanceOffset, scale, width, height);
         rasteriseTriangles(transformedMesh, frameBuffer, depthBuffer, width, height);
     }
 
+    int i = 0;
+    int currentDepth = 1;
+    std::vector<float3> currentOffsets;
+    currentOffsets.push_back(distanceOffset);
+    std::vector<float3> tmpOffsets;
+    updateList(currentOffsets, largestBoundingBoxSide, scale, tmpOffsets);
+    currentOffsets = tmpOffsets;
+    tmpOffsets.clear();
+    scale = scale / 3.0;
+
     // Check whether we've reached the recursive depth of the fractal we want to reach
-    depthLimit--;
-    if(depthLimit == 0)
+    while(currentDepth != depthLimit)
     {
-        return;
-    }
-
-    // Now we recursively draw the meshes in a smaller size
-    for(int offsetX = -1; offsetX <= 1; offsetX++)
-    {
-        for(int offsetY = -1; offsetY <= 1; offsetY++)
+        if(i < pow(3, 3 * currentDepth))
         {
-            for(int offsetZ = -1; offsetZ <= 1; offsetZ++)
+            // We draw the new objects in a grid around the "main" one.
+            // We thus skip the location of the object itself.
+            if(currentOffsets.at(i) != 0)
             {
-                float3 offset(offsetX, offsetY, offsetZ);
-                // We draw the new objects in a grid around the "main" one.
-                // We thus skip the location of the object itself.
-                if(offset == 0)
+                for (unsigned int j = 0; j < meshes.size(); j++)
                 {
-                    continue;
+                    Mesh &mesh = meshes.at(j);
+                    Mesh &transformedMesh = transformedMeshes.at(j);
+                    runVertexShader(mesh, transformedMesh, currentOffsets.at(i), scale, width, height);
+                    rasteriseTriangles(transformedMesh, frameBuffer, depthBuffer, width, height);
                 }
-
-                float smallerScale = scale / 3.0;
-                float3 displacedOffset(
-                    distanceOffset + offset * (largestBoundingBoxSide / 2.0f) * scale
-                );
-
-                renderMeshFractal(meshes, transformedMeshes, width, height, frameBuffer, depthBuffer, largestBoundingBoxSide, angle, depthLimit, smallerScale, displacedOffset);
             }
         }
+        // in order to avoid unuseful computation
+        else if(currentDepth + 1 < depthLimit)
+        {
+            // Now we update the list of the offset in a smaller size
+            updateList(currentOffsets, largestBoundingBoxSide, scale, tmpOffsets);
+            currentOffsets = tmpOffsets;
+            tmpOffsets.clear();
+            currentDepth++;
+            scale = scale / 3.0;
+            i = -1;
+        }
+        else {
+            return;
+        }
+        i++;
     }
-
 }
 
 // This function kicks off the rasterisation process.
