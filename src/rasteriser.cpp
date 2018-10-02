@@ -203,36 +203,24 @@ void renderMeshFractal(
     unsigned int i = 0;
     int currentDepth = 1;
     std::vector<float3> currentOffsets;
-    currentOffsets.push_back(distanceOffset);
     std::vector<float3> tmpOffsets;
+    std::vector<float3> partialCurrentOffsets;
+    currentOffsets.push_back(distanceOffset);
     updateList(currentOffsets, largestBoundingBoxSide, scale, tmpOffsets);
     currentOffsets = tmpOffsets;
     tmpOffsets.clear();
+    // redistribuite the offsets against the various rank
+    for (int k = 0; k < currentOffsets.size(); k++) {
+      if(rank == (k % size)){
+        partialCurrentOffsets.push_back(currentOffsets.at(k));
+      }
+    }
     scale = scale / 3.0;
 
-    // Check whether we've reached the recursive depth of the fractal we want to reach
-    //TODO pulire istanze
-    int totalIterations = 26;
-    int startIndex =  rank * (totalIterations / size);
-    int endIndex = startIndex + totalIterations / size;
-
-    //TODO le due alternative: si riproporziona qui o nell'else. Chiedere consiglio su quale e piu efficiente
-    if(rank >= size - 1) {
-      endIndex = totalIterations;
-    }
-
-    std::vector<float3>::const_iterator first = currentOffsets.begin() + startIndex;
-    std::vector<float3>::const_iterator last = currentOffsets.begin() + endIndex;
-    std::vector<float3> partialCurrentOffsets(first, last);
-    currentOffsets = partialCurrentOffsets;
-    partialCurrentOffsets.clear();
-
-    std::cout << "currentOffsetsZ " << currentOffsets.size() << " " << rank << std::endl;
-    unsigned int number = 26;
+    // Check whether we've reached the recursive depth of the fractal we want to reac
     while(currentDepth != depthLimit)
     {
-        int limit = currentOffsets.size();
-
+        int limit = partialCurrentOffsets.size();
         if(i < limit)
         {
             // We draw the new objects in a grid around the "main" one.
@@ -241,7 +229,7 @@ void renderMeshFractal(
             {
                 Mesh &mesh = meshes.at(j);
                 Mesh &transformedMesh = transformedMeshes.at(j);
-                runVertexShader(mesh, transformedMesh, currentOffsets.at(i), scale, width, height);
+                runVertexShader(mesh, transformedMesh, partialCurrentOffsets.at(i), scale, width, height);
                 rasteriseTriangles(transformedMesh, frameBuffer, depthBuffer, width, height);
             }
         }
@@ -249,11 +237,15 @@ void renderMeshFractal(
         else if(currentDepth + 1 < depthLimit)
         {
             // Now we update the list of the offset in a smaller size
-            std::cout << "currentOffsetsA " << currentOffsets.size() << " " << rank << std::endl;
             updateList(currentOffsets, largestBoundingBoxSide, scale, tmpOffsets);
             currentOffsets = tmpOffsets;
             tmpOffsets.clear();
-            std::cout << "currentOffsetsB " << currentOffsets.size() << " " << rank << std::endl;
+            // redistribuite the offsets against the various rank
+            for (int k = 0; k < currentOffsets.size(); k++) {
+              if(rank == k % size){
+                partialCurrentOffsets.push_back(currentOffsets.at(k));
+              }
+            }
             currentDepth++;
             scale = scale / 3.0;
             i = -1;
@@ -283,8 +275,6 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
     float3 boundingBoxMin(std::numeric_limits<float>::max());
     float3 boundingBoxMax(std::numeric_limits<float>::min());
 
-    std::cout << "Rendering image... " << std::flush;
-
     std::vector<Mesh> transformedMeshes;
     for(unsigned int i = 0; i < meshes.size(); i++)
     {
@@ -305,13 +295,33 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
     float3 boundingBoxDimensions = boundingBoxMax - boundingBoxMin;
     float largestBoundingBoxSide = std::max(std::max(boundingBoxDimensions.x, boundingBoxDimensions.y), boundingBoxDimensions.z);
 
-
     renderMeshFractal(meshes, transformedMeshes, width, height, frameBuffer, depthBuffer, largestBoundingBoxSide, rank, size, depthLimit);//depthLimit);
 
+    std::vector<unsigned char> partialFrameBuffer;
+    partialFrameBuffer.resize(width * height * 4, 0);
+    for (unsigned int i = 3; i < (4 * width * height); i += 4)
+    {
+        partialFrameBuffer.at(i) = 255;
+    }
 
-    std::cout << "finished!" << std::endl;
+    std::vector<float> finalDepthBuffer;
+    int count = width * height;
+    finalDepthBuffer.resize(count, 1);
+    MPI_Barrier(MPI_COMM_WORLD);
+    // use MPI_Allreduce
+    MPI_Allreduce(&depthBuffer[0], &finalDepthBuffer[0], count, MPI_FLOAT, MPI_MIN, MPI_COMM_WORLD);
+
+    for(int i = 0; i< partialFrameBuffer.size(); i=i+4){
+      if(depthBuffer.at(i/4) == finalDepthBuffer.at(i/4)){
+        partialFrameBuffer.at(i) = frameBuffer.at(i);
+        partialFrameBuffer.at(i+1) = frameBuffer.at(i+1);
+        partialFrameBuffer.at(i+2) = frameBuffer.at(i+2);
+        partialFrameBuffer.at(i+3) = frameBuffer.at(i+3);
+      }
+    }
+    count = width * height * 4;
+
+    MPI_Reduce(&partialFrameBuffer[0], &frameBuffer[0], count, MPI_BYTE, MPI_BOR, 0,MPI_COMM_WORLD);
 
     return frameBuffer;
-
-
 }

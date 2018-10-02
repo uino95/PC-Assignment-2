@@ -79,17 +79,18 @@ int main(int argc, char **argv)
             }
         }
     }
-
-    std::cout << "Loading '" << input << "' file... " << std::endl;
-
     int root = 0;
+    if(rank == root){
+      std::cout << "Loading '" << input << "' file... " << std::endl;
+    }
+
     unsigned int meshSize;
     std::vector<unsigned int> verticesSize;
     std::vector<unsigned int> normalsSize;
     std::vector<unsigned int> texturesSize;
 
     // just load the materials
-    std::vector<Mesh> meshs = loadWavefront(input, rank, root, false);
+    std::vector<Mesh> meshs = loadWavefront(input, false);
 
     // For each mesh i need the sizes of each vector
     if(rank == root)
@@ -147,15 +148,18 @@ int main(int argc, char **argv)
 
     std::vector<unsigned char> frameBuffer = rasterise(meshs, width, height, rank, size, depth);
 
-    std::cout << "Writing image to '" << output << "'..." << std::endl;
+    if(rank == root){
 
-    unsigned error = lodepng::encode(output, frameBuffer, width, height);
+        std::cout << "Writing image to '" << output << "'..." << std::endl;
 
-    if(error)
-    {
-        std::cout << "An error occurred while writing the image file: " << error << ": " << lodepng_error_text(error) << std::endl;
+        unsigned error = lodepng::encode(output, frameBuffer, width, height);
+
+        if(error)
+        {
+            std::cout << "An error occurred while writing the image file: " << error << ": " << lodepng_error_text(error) << std::endl;
+        }
+        std::cout << "finished!" << std::endl;
     }
-
 
     MPI_Finalize();
 
