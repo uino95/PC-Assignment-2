@@ -152,6 +152,13 @@ void rasteriseTriangles( Mesh &transformedMesh,
     }
 }
 
+/**
+* Updates the vector of offsets so to provide the vertices for the current depth.
+* That is possible thanks to the scale coefficient, that is correctly passed by the
+* renderMeshFractal. Higher scale provides more in-depth image.
+* Considering currentOffsets, the newOffsets vector is updated by scaling
+* by the "scale" factor.
+*/
 void updateList(std::vector<float3> &currentOffsets, float largestBoundingBoxSide, float scale, std::vector<float3> &newOffsets)
 {
 
@@ -189,7 +196,7 @@ void renderMeshFractal(
     float scale = 1.0,
     float3 distanceOffset = {0, 0, 0})
 {
-    // Start by rendering the mesh at this depth
+    // Rank 0 handles first depth
     if(rank == 0) {
       for (unsigned int j = 0; j < meshes.size(); j++)
       {
@@ -202,22 +209,44 @@ void renderMeshFractal(
 
     unsigned int i = 0;
     int currentDepth = 1;
+    /**
+    * currentOffsets are the overall offsets. We always build all of them,
+    * and then we rearrange them into the partials.
+    */
     std::vector<float3> currentOffsets;
+    /**
+    * tmpOffsets is used to build the offsets for the next level of depth.
+    * It is necessary as currentOffsets is used to do that, so we need
+    * a temporary vector
+    */
     std::vector<float3> tmpOffsets;
+    /**
+    * partialCurrentOffsets instead contains only the offsets that are used
+    * by the current process.
+    */
     std::vector<float3> partialCurrentOffsets;
+    /**
+    * First level of depth: just call updateList with scale factor of 1.
+    */
     currentOffsets.push_back(distanceOffset);
     updateList(currentOffsets, largestBoundingBoxSide, scale, tmpOffsets);
     currentOffsets = tmpOffsets;
     tmpOffsets.clear();
-    // redistribuite the offsets against the various rank
-    for (int k = 0; k < currentOffsets.size(); k++) {
-      if(rank == (k % size)){
-        partialCurrentOffsets.push_back(currentOffsets.at(k));
+    /**
+    * Once we have the currentOffsets vector, we just need to redistribuite them
+    * over the various ranks. To do it in a proper way, we use partialCurrentOffsets,
+    * and fill it only if the condition: rank == (k % size) is true (being size the number of processes)
+    */
+    if(currentDepth < depthLimit) {
+      for (int k = 0; k < currentOffsets.size(); k++) {
+        if(rank == (k % size)){
+          partialCurrentOffsets.push_back(currentOffsets.at(k));
+        }
       }
+      scale = scale / 3.0;
     }
-    scale = scale / 3.0;
 
-    // Check whether we've reached the recursive depth of the fractal we want to reac
+    // And now we iterate for all the other levels.
     while(currentDepth != depthLimit)
     {
         int limit = partialCurrentOffsets.size();
