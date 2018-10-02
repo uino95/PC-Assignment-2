@@ -84,7 +84,7 @@ std::vector<Material> loadMaterials(std::string const srcFile, bool quiet)
     return materials;
 }
 
-std::vector<Mesh> loadWavefront(std::string const srcFile, int rank, int root, bool quiet)
+std::vector<Mesh> loadWavefront(std::string const srcFile, bool quiet)
 {
     std::vector<Mesh> meshs;
     std::ifstream objFile(srcFile);
