@@ -196,94 +196,90 @@ void renderMeshFractal(
     float scale = 1.0,
     float3 distanceOffset = {0, 0, 0})
 {
-    // Rank 0 handles first depth
-    if(rank == 0) {
-      for (unsigned int j = 0; j < meshes.size(); j++)
-      {
-          Mesh &mesh = meshes.at(j);
-          Mesh &transformedMesh = transformedMeshes.at(j);
-          runVertexShader(mesh, transformedMesh, distanceOffset, scale, width, height);
-          rasteriseTriangles(transformedMesh, frameBuffer, depthBuffer, width, height);
-      }
-    }
-
-    unsigned int i = 0;
-    int currentDepth = 1;
+  unsigned int i = 0;
+  int currentDepth = 1;
+  int limit = 1;
+  /**
+  * currentOffsets are the overall offsets. We always build all of them,
+  * and then we rearrange them into the partials.
+  * At first, we initialize it with only the distanceOffset, as the first depth
+  * contains only one image
+  */
+  std::vector<float3> currentOffsets;
+  currentOffsets.push_back(distanceOffset);
+  /**
+  * tmpOffsets is used to build the offsets for the next level of depth.
+  * It is necessary as currentOffsets is necessary while doing that, so we need
+  * a temporary vector
+  */
+  std::vector<float3> tmpOffsets;
+  /**
+  * partialCurrentOffsets instead contains only the offsets that are used
+  * by the current process. Same reasoning as for currentOffsets
+  * for the representation of the
+  */
+  std::vector<float3> partialCurrentOffsets;
+  partialCurrentOffsets.push_back(distanceOffset);
+  /**
+  * Once we have the currentOffsets vector, we just need to redistribuite them
+  * over the various ranks. To do it in a proper way, we use partialCurrentOffsets,
+  * and fill it only if the condition: rank == (k % size) is true (being size the number of processes)
+  */
+  do {
     /**
-    * currentOffsets are the overall offsets. We always build all of them,
-    * and then we rearrange them into the partials.
+    * First branch: representation for the current depth. This branch is taken
+    * more times for each branch, until every offset in partialCurrentOffsets
+    * is executed.
     */
-    std::vector<float3> currentOffsets;
-    /**
-    * tmpOffsets is used to build the offsets for the next level of depth.
-    * It is necessary as currentOffsets is used to do that, so we need
-    * a temporary vector
-    */
-    std::vector<float3> tmpOffsets;
-    /**
-    * partialCurrentOffsets instead contains only the offsets that are used
-    * by the current process.
-    */
-    std::vector<float3> partialCurrentOffsets;
-    /**
-    * First level of depth: just call updateList with scale factor of 1.
-    */
-    currentOffsets.push_back(distanceOffset);
-    updateList(currentOffsets, largestBoundingBoxSide, scale, tmpOffsets);
-    currentOffsets = tmpOffsets;
-    tmpOffsets.clear();
-    /**
-    * Once we have the currentOffsets vector, we just need to redistribuite them
-    * over the various ranks. To do it in a proper way, we use partialCurrentOffsets,
-    * and fill it only if the condition: rank == (k % size) is true (being size the number of processes)
-    */
-    if(currentDepth < depthLimit) {
-      for (int k = 0; k < currentOffsets.size(); k++) {
-        if(rank == (k % size)){
-          partialCurrentOffsets.push_back(currentOffsets.at(k));
-        }
-      }
-      scale = scale / 3.0;
-    }
-
-    // And now we iterate for all the other levels.
-    while(currentDepth != depthLimit)
+    if(i < limit)
     {
-        int limit = partialCurrentOffsets.size();
-        if(i < limit)
+        /**
+        * Drawing objects for the current iteration.
+        */
+        for (unsigned int j = 0; j < meshes.size(); j++)
         {
-            // We draw the new objects in a grid around the "main" one.
-            // We thus skip the location of the object itself.
-            for (unsigned int j = 0; j < meshes.size(); j++)
-            {
-                Mesh &mesh = meshes.at(j);
-                Mesh &transformedMesh = transformedMeshes.at(j);
-                runVertexShader(mesh, transformedMesh, partialCurrentOffsets.at(i), scale, width, height);
-                rasteriseTriangles(transformedMesh, frameBuffer, depthBuffer, width, height);
-            }
+            Mesh &mesh = meshes.at(j);
+            Mesh &transformedMesh = transformedMeshes.at(j);
+            runVertexShader(mesh, transformedMesh, partialCurrentOffsets.at(i), scale, width, height);
+            rasteriseTriangles(transformedMesh, frameBuffer, depthBuffer, width, height);
         }
-        // in order to avoid unuseful computation
-        else if(currentDepth + 1 < depthLimit)
-        {
-            // Now we update the list of the offset in a smaller size
-            updateList(currentOffsets, largestBoundingBoxSide, scale, tmpOffsets);
-            currentOffsets = tmpOffsets;
-            tmpOffsets.clear();
-            // redistribuite the offsets against the various rank
-            for (int k = 0; k < currentOffsets.size(); k++) {
-              if(rank == k % size){
-                partialCurrentOffsets.push_back(currentOffsets.at(k));
-              }
-            }
-            currentDepth++;
-            scale = scale / 3.0;
-            i = -1;
-        }
-        else {
-            return;
-        }
-        i++;
     }
+    /**
+    * We compute the new offsets by calling updateList only if the next depth
+    * is required by the user. Note that this branch contains the parallelization,
+    * and that it is never entered in case of DEPTH=1. In that case, we don't
+    * have any kind of parallelization.
+    */
+    else if(currentDepth + 1 < depthLimit)
+    {
+        // Now we update the list of the offset in a smaller size
+        updateList(currentOffsets, largestBoundingBoxSide, scale, tmpOffsets);
+        currentOffsets = tmpOffsets;
+        tmpOffsets.clear();
+        /**
+        * Here is where the real parallelization happens.
+        * In order to obtain a fair redistribution, we consider the current index,
+        * divide it by the number of processes (i.e., size variable) and update
+        * partialCurrentOffsets only in case rest is 0
+        */
+        for (int k = 0; k < currentOffsets.size(); k++) {
+          if(rank == k % size){
+            partialCurrentOffsets.push_back(currentOffsets.at(k));
+          }
+        }
+        currentDepth++;
+        scale = scale / 3.0;
+        i = -1;
+        limit = partialCurrentOffsets.size();
+    }
+    /**
+    * Otherwise, we have reached the limit and we exit the loop.
+    */
+    else {
+        return;
+    }
+    i++;
+  } while(currentDepth != depthLimit);
 }
 
 // This function kicks off the rasterisation process.
