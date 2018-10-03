@@ -182,6 +182,11 @@ void updateList(std::vector<float3> &currentOffsets, float largestBoundingBoxSid
     }
 }
 
+/**
+ * Iterative implementation of renderMeshFractal. 
+ * For each depth, it computes the images to be represented
+ * by considering the appropriate scale factor.
+*/
 void renderMeshFractal(
     std::vector<Mesh> &meshes,
     std::vector<Mesh> &transformedMeshes,
@@ -322,8 +327,26 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
 
     renderMeshFractal(meshes, transformedMeshes, width, height, frameBuffer, depthBuffer, largestBoundingBoxSide, rank, size, depthLimit);//depthLimit);
 
+    /**
+    * Now we have the correct values for the frameBuffer and for the depthBuffer.
+    * They must be resembled correctly in one of the ranks. We chosed the first rank
+    * as the one.
+    * partialFrameBuffer: it will contain the values of the local frame buffer computed by each process.
+    *   We assign 0 as default value, and then make a binary OR reduction. This allows us to
+    *   assign the correct value, as (0 | any_value) = any_value.
+    *   By doing this, we are able to reconstruct the correct value of the final frame buffer.
+    *   It is composed of width * height * 4 elements, that is the total length of the image.
+    * depthBuffer: already contains the values of the local depth buffer computed by each process.
+    *   After that, we'll use this to fill finalDepthBuffer with a min reduction.
+    * frameBuffer: contains the values of the local frame buffer. It will be used as the container
+    *   of the final buffer. It will be filled with a binary OR reduction on the different 
+    *   partialFrameBuffers.
+    * finalDepthBuffer: it will be used as the container of the final depth buffer.
+    *   It's size is width * height and each element will be initialized to 1.
+    */
     std::vector<unsigned char> partialFrameBuffer;
     partialFrameBuffer.resize(width * height * 4, 0);
+    //initialize partialFrameBuffer with 1 every 4 elements
     for (unsigned int i = 3; i < (4 * width * height); i += 4)
     {
         partialFrameBuffer.at(i) = 255;
@@ -332,10 +355,27 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
     std::vector<float> finalDepthBuffer;
     int count = width * height;
     finalDepthBuffer.resize(count, 1);
+    /**
+     * Here we need them to be synchronized, otherwise it can happen that 
+     * we make a reduction without having completed the execution of renderMeshFractal. 
+     */
     MPI_Barrier(MPI_COMM_WORLD);
-    // use MPI_Allreduce
+    
+    /**
+     * First reduction: depthBuffer contains the values of the local buffers.
+     * By default, the values of finalDepthBuffer are 1. This allows us to 
+     * fill finalDepthBuffer with the correct values for each element. 
+     */
     MPI_Allreduce(&depthBuffer[0], &finalDepthBuffer[0], count, MPI_FLOAT, MPI_MIN, MPI_COMM_WORLD);
 
+    /**
+     * First, we prepare partialFrameBuffer with the values of the already computed
+     * frameBuffer. Being an OR reduction, we want either 0, or the correct values.
+     * We already initialized all the values at 0, so we just need to initialize
+     * partialFrameBuffer with the value of frameBuffer each time we are in the correct process.
+     * This condition is true whenever for each index of frameBuffer s.t. 
+     * depthBuffer.at(index) == finalDepthBuffer.at(index)
+    */
     for(int i = 0; i< partialFrameBuffer.size(); i=i+4){
       if(depthBuffer.at(i/4) == finalDepthBuffer.at(i/4)){
         partialFrameBuffer.at(i) = frameBuffer.at(i);
@@ -345,7 +385,10 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
       }
     }
     count = width * height * 4;
-
+    /**
+     * Second reduction: now we have the partialFrameBuffer correctly initialized.
+     * We need to use that to fill frameBuffer. That is done with an OR reduction. 
+     */
     MPI_Reduce(&partialFrameBuffer[0], &frameBuffer[0], count, MPI_BYTE, MPI_BOR, 0,MPI_COMM_WORLD);
 
     return frameBuffer;
