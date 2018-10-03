@@ -183,7 +183,7 @@ void updateList(std::vector<float3> &currentOffsets, float largestBoundingBoxSid
 }
 
 /**
- * Iterative implementation of renderMeshFractal. 
+ * Iterative implementation of renderMeshFractal.
  * For each depth, it computes the images to be represented
  * by considering the appropriate scale factor.
 */
@@ -202,7 +202,7 @@ void renderMeshFractal(
     float3 distanceOffset = {0, 0, 0})
 {
   unsigned int i = 0;
-  int currentDepth = 1;
+  int currentDepth = 0;
   int limit = 1;
   /**
   * currentOffsets are the overall offsets. We always build all of them,
@@ -339,7 +339,7 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
     * depthBuffer: already contains the values of the local depth buffer computed by each process.
     *   After that, we'll use this to fill finalDepthBuffer with a min reduction.
     * frameBuffer: contains the values of the local frame buffer. It will be used as the container
-    *   of the final buffer. It will be filled with a binary OR reduction on the different 
+    *   of the final buffer. It will be filled with a binary OR reduction on the different
     *   partialFrameBuffers.
     * finalDepthBuffer: it will be used as the container of the final depth buffer.
     *   It's size is width * height and each element will be initialized to 1.
@@ -356,15 +356,15 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
     int count = width * height;
     finalDepthBuffer.resize(count, 1);
     /**
-     * Here we need them to be synchronized, otherwise it can happen that 
-     * we make a reduction without having completed the execution of renderMeshFractal. 
+     * Here we need them to be synchronized, otherwise it can happen that
+     * we make a reduction without having completed the execution of renderMeshFractal.
      */
     MPI_Barrier(MPI_COMM_WORLD);
-    
+
     /**
      * First reduction: depthBuffer contains the values of the local buffers.
-     * By default, the values of finalDepthBuffer are 1. This allows us to 
-     * fill finalDepthBuffer with the correct values for each element. 
+     * By default, the values of finalDepthBuffer are 1. This allows us to
+     * fill finalDepthBuffer with the correct values for each element.
      */
     MPI_Allreduce(&depthBuffer[0], &finalDepthBuffer[0], count, MPI_FLOAT, MPI_MIN, MPI_COMM_WORLD);
 
@@ -373,7 +373,7 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
      * frameBuffer. Being an OR reduction, we want either 0, or the correct values.
      * We already initialized all the values at 0, so we just need to initialize
      * partialFrameBuffer with the value of frameBuffer each time we are in the correct process.
-     * This condition is true whenever for each index of frameBuffer s.t. 
+     * This condition is true whenever for each index of frameBuffer s.t.
      * depthBuffer.at(index) == finalDepthBuffer.at(index)
     */
     for(int i = 0; i< partialFrameBuffer.size(); i=i+4){
@@ -387,7 +387,7 @@ std::vector<unsigned char> rasterise(std::vector<Mesh> &meshes, unsigned int wid
     count = width * height * 4;
     /**
      * Second reduction: now we have the partialFrameBuffer correctly initialized.
-     * We need to use that to fill frameBuffer. That is done with an OR reduction. 
+     * We need to use that to fill frameBuffer. That is done with an OR reduction.
      */
     MPI_Reduce(&partialFrameBuffer[0], &frameBuffer[0], count, MPI_BYTE, MPI_BOR, 0,MPI_COMM_WORLD);
 
