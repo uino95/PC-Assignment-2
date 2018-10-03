@@ -111,9 +111,9 @@ int main(int argc, char **argv)
     {
         for (unsigned int i = 0; i < meshs.size(); ++i)
         {
-            meshs.at(i).vertices.clear();
-            meshs.at(i).normals.clear();
-            meshs.at(i).textures.clear();
+            meshs.at(i).vertices.resize(0);
+            meshs.at(i).normals.resize(0);
+            meshs.at(i).textures.resize(0);
         }
 
         verticesSize.resize(meshSize);
